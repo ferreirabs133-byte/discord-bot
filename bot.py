@@ -9,8 +9,7 @@ import os
 # ─────────────────────────────────────────
 TOKEN = os.environ.get("TOKEN")
 
-# Coloque aqui o seu ID do Discord (clique direito no seu perfil → Copiar ID)
-DONO_ID = SEU_ID_AQUI
+
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -29,8 +28,6 @@ user_perms: dict[int, dict[int, set]] = {}
 #  HELPERS DE PERMISSÃO
 # ─────────────────────────────────────────
 def tem_perm(guild_id: int, user_id: int, funcao: str) -> bool:
-    if user_id == DONO_ID:
-        return True
     return funcao in user_perms.get(guild_id, {}).get(user_id, set())
 
 
@@ -176,9 +173,6 @@ class PermView(discord.ui.View):
 @bot.tree.command(name="perm", description="Dá ou remove permissões do bot para um membro")
 @app_commands.describe(membro="Membro que vai receber ou perder permissões")
 async def perm(interaction: discord.Interaction, membro: discord.Member):
-    if interaction.user.id != DONO_ID:
-        return await interaction.response.send_message("❌ Só o dono do bot pode gerenciar permissões.", ephemeral=True)
-
     guild_id = interaction.guild_id
     perms_atuais = user_perms.get(guild_id, {}).get(membro.id, set())
     nomes = {"elevador": "🛗 Elevador", "mutereverse": "🛡️ Mute Reverso"}
@@ -350,8 +344,6 @@ async def elevador_status(interaction: discord.Interaction, servidor: str):
 # ─────────────────────────────────────────
 @bot.command(name="sync")
 async def sync_guild(ctx):
-    if ctx.author.id != DONO_ID:
-        return await ctx.send("❌ Só o dono pode usar isso.")
     bot.tree.copy_global_to(guild=ctx.guild)
     await bot.tree.sync(guild=ctx.guild)
     await ctx.send(f"✅ Slash commands sincronizados em **{ctx.guild.name}**!")
