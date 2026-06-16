@@ -10,7 +10,7 @@ import os
 TOKEN = os.environ.get("TOKEN")
 
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="d!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ─────────────────────────────────────────
 #  ESTADO GLOBAL
@@ -365,6 +365,50 @@ async def perm(interaction: discord.Interaction, membro: discord.Member):
     await interaction.response.send_message(embed=embed, view=PermView(), ephemeral=True)
 
 
+
+# ─────────────────────────────────────────
+#  PERMISSÕES DO d!menu
+# ─────────────────────────────────────────
+# guild_id -> set de user_ids com acesso ao d!menu
+menu_perms: dict[int, set[int]] = {}
+
+
+@bot.command(name="menu")
+async def dmenu(ctx):
+    """Abre o menu do bot via prefixo d!menu"""
+    guild_id = ctx.guild.id if ctx.guild else None
+    uid = ctx.author.id
+
+    if guild_id and uid not in menu_perms.get(guild_id, set()):
+        return await ctx.send("❌ Você não tem permissão para usar o menu.", delete_after=5)
+
+    guilds = servidores_do_usuario(uid)
+    if not guilds:
+        return await ctx.send("❌ Não encontrei nenhum servidor em comum.")
+
+    view = ServidorView(uid, 0, MenuAcoesView)
+    embed = discord.Embed(
+        title="⚙️ Menu do Bot",
+        description="Selecione um servidor:",
+        color=discord.Color.blurple()
+    )
+    await ctx.send(embed=embed, view=view)
+
+
+@bot.tree.command(name="menuperm", description="Dá ou remove acesso ao d!menu para um membro")
+@app_commands.describe(membro="Membro que vai receber ou perder acesso ao d!menu")
+async def menuperm(interaction: discord.Interaction, membro: discord.Member):
+    guild_id = interaction.guild_id
+    if guild_id not in menu_perms:
+        menu_perms[guild_id] = set()
+
+    if membro.id in menu_perms[guild_id]:
+        menu_perms[guild_id].discard(membro.id)
+        await interaction.response.send_message(f"🚫 **{membro.display_name}** perdeu acesso ao `d!menu`.", ephemeral=True)
+    else:
+        menu_perms[guild_id].add(membro.id)
+        await interaction.response.send_message(f"✅ **{membro.display_name}** agora pode usar `d!menu`.", ephemeral=True)
+
 @bot.command(name="sync")
 async def sync_guild(ctx):
     bot.tree.copy_global_to(guild=ctx.guild)
@@ -378,4 +422,4 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 bot.run(TOKEN)
-    
+                            
