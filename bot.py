@@ -9,8 +9,6 @@ import os
 # ─────────────────────────────────────────
 TOKEN = os.environ.get("TOKEN")
 
-
-
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -19,6 +17,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ─────────────────────────────────────────
 reverse_mute_targets: dict[int, int] = {}   # guild_id -> user_id
 elevator_targets: dict[int, dict] = {}       # guild_id -> {"user_id", "canais"}
+elevator_index: dict[int, int] = {}          # guild_id -> índice atual do canal
 
 # Permissões: guild_id -> {user_id: set("elevador", "mutereverse")}
 user_perms: dict[int, dict[int, set]] = {}
@@ -32,14 +31,16 @@ def tem_perm(guild_id: int, user_id: int, funcao: str) -> bool:
 
 
 # ─────────────────────────────────────────
-#  AUTOCOMPLETE
+#  AUTOCOMPLETE — servidores que o usuário está
 # ─────────────────────────────────────────
 async def autocomplete_servidores(interaction: discord.Interaction, current: str):
-    return [
-        app_commands.Choice(name=g.name, value=str(g.id))
-        for g in bot.guilds
-        if current.lower() in g.name.lower()
-    ][:25]
+    resultados = []
+    for g in bot.guilds:
+        # Só mostra servidores onde o usuário é membro
+        member = g.get_member(interaction.user.id)
+        if member and (current.lower() in g.name.lower()):
+            resultados.append(app_commands.Choice(name=g.name, value=str(g.id)))
+    return resultados[:25]
 
 
 # ─────────────────────────────────────────
@@ -85,7 +86,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 
 # ─────────────────────────────────────────
-#  TAREFA: ELEVADOR
+#  TAREFA: ELEVADOR (todos os canais de voz)
 # ─────────────────────────────────────────
 @tasks.loop(seconds=2)
 async def elevador_loop():
@@ -93,22 +94,31 @@ async def elevador_loop():
         guild = bot.get_guild(guild_id)
         if not guild:
             continue
+
         member = guild.get_member(config["user_id"])
         if not member or not member.voice:
             continue
-        canal_ids = config["canais"]
-        atual = member.voice.channel.id
-        proximos = [c for c in canal_ids if c != atual] or canal_ids
-        proximo_canal = guild.get_channel(proximos[0])
-        if proximo_canal:
+
+        # Pega todos os canais de voz do servidor
+        canais_voz = [c for c in guild.channels if isinstance(c, discord.VoiceChannel)]
+        if len(canais_voz) < 2:
+            continue
+
+        # Avança para o próximo canal
+        idx = elevator_index.get(guild_id, 0)
+        idx = (idx + 1) % len(canais_voz)
+        elevator_index[guild_id] = idx
+
+        proximo = canais_voz[idx]
+        if proximo.id != member.voice.channel.id:
             try:
-                await member.move_to(proximo_canal, reason="Elevador ativo")
+                await member.move_to(proximo, reason="Elevador ativo")
             except Exception as e:
                 print(f"Erro elevador: {e}")
 
 
 # ─────────────────────────────────────────
-#  MENU DE PERMISSÕES — View com Select
+#  MENU DE PERMISSÕES
 # ─────────────────────────────────────────
 class PermSelect(discord.ui.Select):
     def __init__(self, membro: discord.Member):
@@ -147,10 +157,7 @@ class PermSelect(discord.ui.Select):
         selecionadas = set(self.values)
         user_perms[guild_id][uid] = selecionadas
 
-        nomes = {
-            "elevador": "🛗 Elevador",
-            "mutereverse": "🛡️ Mute Reverso"
-        }
+        nomes = {"elevador": "🛗 Elevador", "mutereverse": "🛡️ Mute Reverso"}
 
         if selecionadas:
             lista = ", ".join(nomes[p] for p in selecionadas)
@@ -177,10 +184,7 @@ async def perm(interaction: discord.Interaction, membro: discord.Member):
     perms_atuais = user_perms.get(guild_id, {}).get(membro.id, set())
     nomes = {"elevador": "🛗 Elevador", "mutereverse": "🛡️ Mute Reverso"}
 
-    if perms_atuais:
-        status = ", ".join(nomes[p] for p in perms_atuais)
-    else:
-        status = "nenhuma"
+    status = ", ".join(nomes[p] for p in perms_atuais) if perms_atuais else "nenhuma"
 
     embed = discord.Embed(
         title="⚙️ Gerenciar Permissões",
@@ -256,15 +260,13 @@ async def mutereverse_status(interaction: discord.Interaction, servidor: str):
 # ─────────────────────────────────────────
 #  SLASH COMMANDS — ELEVADOR
 # ─────────────────────────────────────────
-@bot.tree.command(name="elevador_iniciar", description="Inicia o elevador num servidor escolhido")
+@bot.tree.command(name="elevador_iniciar", description="Fica movendo um usuário entre todos os canais de voz do servidor")
 @app_commands.describe(
-    servidor="Servidor onde ativar",
-    user_id="ID do usuário a mover",
-    canal1_id="ID do primeiro canal de voz",
-    canal2_id="ID do segundo canal de voz"
+    servidor="Servidor onde ativar (apenas servidores que você está)",
+    user_id="ID do usuário a mover"
 )
 @app_commands.autocomplete(servidor=autocomplete_servidores)
-async def elevador_iniciar(interaction: discord.Interaction, servidor: str, user_id: str, canal1_id: str, canal2_id: str):
+async def elevador_iniciar(interaction: discord.Interaction, servidor: str, user_id: str):
     if not tem_perm(interaction.guild_id, interaction.user.id, "elevador"):
         return await interaction.response.send_message("❌ Você não tem permissão para usar o elevador.", ephemeral=True)
 
@@ -274,26 +276,25 @@ async def elevador_iniciar(interaction: discord.Interaction, servidor: str, user
 
     try:
         uid = int(user_id)
-        c1 = int(canal1_id)
-        c2 = int(canal2_id)
     except ValueError:
-        return await interaction.response.send_message("❌ IDs inválidos.", ephemeral=True)
+        return await interaction.response.send_message("❌ ID inválido.", ephemeral=True)
 
     member = guild.get_member(uid)
-    canal1 = guild.get_channel(c1)
-    canal2 = guild.get_channel(c2)
-
     if not member:
         return await interaction.response.send_message("❌ Usuário não encontrado no servidor.", ephemeral=True)
-    if not canal1 or not canal2:
-        return await interaction.response.send_message("❌ Canal(is) não encontrado(s).", ephemeral=True)
 
-    elevator_targets[guild.id] = {"user_id": uid, "canais": [c1, c2]}
+    canais_voz = [c for c in guild.channels if isinstance(c, discord.VoiceChannel)]
+    if len(canais_voz) < 2:
+        return await interaction.response.send_message("❌ O servidor precisa ter pelo menos 2 canais de voz.", ephemeral=True)
+
+    elevator_targets[guild.id] = {"user_id": uid}
+    elevator_index[guild.id] = 0
+
     if not elevador_loop.is_running():
         elevador_loop.start()
 
     await interaction.response.send_message(
-        f"🛗 Elevador iniciado para **{member.display_name}** entre **{canal1.name}** e **{canal2.name}** em **{guild.name}**.",
+        f"🛗 Elevador iniciado para **{member.display_name}** em **{guild.name}** — movendo entre {len(canais_voz)} canais de voz.",
         ephemeral=True
     )
 
@@ -310,6 +311,7 @@ async def elevador_parar(interaction: discord.Interaction, servidor: str):
         return await interaction.response.send_message("❌ Servidor não encontrado.", ephemeral=True)
 
     elevator_targets.pop(guild.id, None)
+    elevator_index.pop(guild.id, None)
     if not elevator_targets:
         elevador_loop.cancel()
     await interaction.response.send_message(f"✅ Elevador parado em **{guild.name}**.", ephemeral=True)
@@ -330,17 +332,16 @@ async def elevador_status(interaction: discord.Interaction, servidor: str):
     if config:
         member = guild.get_member(config["user_id"])
         nome = member.display_name if member else f"ID {config['user_id']}"
-        canais = [guild.get_channel(c) for c in config["canais"]]
-        nomes = " ↔ ".join(c.name for c in canais if c)
+        canais_voz = [c for c in guild.channels if isinstance(c, discord.VoiceChannel)]
         await interaction.response.send_message(
-            f"🛗 Elevador ativo para **{nome}** nos canais {nomes} em **{guild.name}**.", ephemeral=True
+            f"🛗 Elevador ativo para **{nome}** em **{guild.name}** ({len(canais_voz)} canais de voz).", ephemeral=True
         )
     else:
         await interaction.response.send_message(f"❌ Nenhum elevador ativo em **{guild.name}**.", ephemeral=True)
 
 
 # ─────────────────────────────────────────
-#  SYNC (só dono)
+#  SYNC
 # ─────────────────────────────────────────
 @bot.command(name="sync")
 async def sync_guild(ctx):
@@ -361,3 +362,4 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 #  INICIAR
 # ─────────────────────────────────────────
 bot.run(TOKEN)
+
