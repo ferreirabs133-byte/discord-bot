@@ -1,1 +1,1 @@
-worker: python bot.py
+discord.py>=2.6.0
