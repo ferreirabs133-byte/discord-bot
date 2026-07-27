@@ -20,7 +20,7 @@ CANAL_PADRAO_ID = int(os.getenv("CANAL_PADRAO_ID", "0"))
 # Textos e banner do painel (troque à vontade)
 TITULO = "Encaminhada"
 TEXTO = "Clique no botão abaixo para se desmutar automaticamente."
-BANNER_URL = "https://exemplo.com/banner.png"  # troque pela URL da sua imagem
+BANNER_URL = os.getenv("BANNER_URL", "")  # troque pela URL da sua imagem, ou defina BANNER_URL no Railway. Deixe vazio para não mostrar banner.
 
 
 intents = discord.Intents.default()
@@ -114,7 +114,16 @@ async def enviar_painel_unmute(interaction: discord.Interaction, canal: discord.
         )
         return
 
-    await canal_final.send(view=UnmuteLayout())
+    try:
+        await canal_final.send(view=UnmuteLayout())
+    except Exception as e:
+        print(f"[ERRO ao enviar painel] {type(e).__name__}: {e}")
+        await interaction.response.send_message(
+            f"❌ Erro ao enviar o painel: `{type(e).__name__}: {e}`",
+            ephemeral=True,
+        )
+        return
+
     await interaction.response.send_message(f"✅ Painel enviado em {canal_final.mention}.", ephemeral=True)
 
 
