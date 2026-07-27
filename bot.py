@@ -31,9 +31,48 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 # ------------------------------------------------------------------
-# View (Components V2) com o botão de unmute
+# Botão de unmute como subclasse (funciona mesmo criado dinamicamente)
 # custom_id fixo -> permite que o botão continue funcionando mesmo
 # depois de reiniciar o bot (view persistente)
+# ------------------------------------------------------------------
+class UnmuteButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="unmute",
+            style=discord.ButtonStyle.secondary,
+            custom_id="unmute_button",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        member = interaction.user
+
+        if member.voice is None or member.voice.channel is None:
+            await interaction.response.send_message(
+                "Você precisa estar em um canal de voz para usar esse botão.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            await member.edit(mute=False, reason="Desmutado via botão do painel")
+            await interaction.response.send_message(
+                "🔊 Você foi desmutado com sucesso!", ephemeral=True
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "Não consegui desmutar você. Verifique se o bot tem a permissão "
+                "**Silenciar Membros** e um cargo acima do seu.",
+                ephemeral=True,
+            )
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                "Ocorreu um erro ao tentar desmutar você. Tente novamente.",
+                ephemeral=True,
+            )
+
+
+# ------------------------------------------------------------------
+# View (Components V2) com o painel + botão de unmute
 # ------------------------------------------------------------------
 class UnmuteLayout(discord.ui.LayoutView):
     def __init__(self):
@@ -53,36 +92,9 @@ class UnmuteLayout(discord.ui.LayoutView):
         container.add_item(discord.ui.Separator())
 
         row = discord.ui.ActionRow()
-
-        @row.button(label="unmute", style=discord.ButtonStyle.secondary, custom_id="unmute_button")
-        async def unmute_callback(interaction: discord.Interaction, button: discord.ui.Button):
-            member = interaction.user
-
-            if member.voice is None or member.voice.channel is None:
-                await interaction.response.send_message(
-                    "Você precisa estar em um canal de voz para usar esse botão.",
-                    ephemeral=True,
-                )
-                return
-
-            try:
-                await member.edit(mute=False, reason="Desmutado via botão do painel")
-                await interaction.response.send_message(
-                    "🔊 Você foi desmutado com sucesso!", ephemeral=True
-                )
-            except discord.Forbidden:
-                await interaction.response.send_message(
-                    "Não consegui desmutar você. Verifique se o bot tem a permissão "
-                    "**Silenciar Membros** e um cargo acima do seu.",
-                    ephemeral=True,
-                )
-            except discord.HTTPException:
-                await interaction.response.send_message(
-                    "Ocorreu um erro ao tentar desmutar você. Tente novamente.",
-                    ephemeral=True,
-                )
-
+        row.add_item(UnmuteButton())
         container.add_item(row)
+
         self.add_item(container)
 
 
@@ -103,7 +115,7 @@ async def enviar_painel_unmute(interaction: discord.Interaction, canal: discord.
         return
 
     await canal_final.send(view=UnmuteLayout())
-    await interaction.response.send_message(f" Painel enviado em {canal_final.mention}.", ephemeral=True)
+    await interaction.response.send_message(f"✅ Painel enviado em {canal_final.mention}.", ephemeral=True)
 
 
 @enviar_painel_unmute.error
